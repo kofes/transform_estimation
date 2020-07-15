@@ -2,7 +2,7 @@
   text-align: center;
 }
 
-.images, .keypoints {
+.images, .keypoints, .correspondeces {
   display: flex;
   flex-flow: row nowrap;
   justify-content: center;
@@ -25,3 +25,33 @@
   width: 640px;
   height: auto;
 }
+
+.correspondeces canvas {
+  margin: 5px;
+  width: 640px;
+  height: auto;
+}
+
+/*.images img {*/
+/*  margin: 5px;*/
+/*  width: 960px;*/
+/*  height: auto;*/
+/*}*/
+
+/*.images canvas {*/
+/*  margin: 5px;*/
+/*  width: 960px;*/
+/*  height: auto;*/
+/*}*/
+
+/*.keypoints canvas {*/
+/*  margin: 5px;*/
+/*  width: 960px;*/
+/*  height: auto;*/
+/*}*/
+
+/*.correspondeces canvas {*/
+/*  margin: 5px;*/
+/*  width: 960px;*/
+/*  height: auto;*/
+/*}*/
