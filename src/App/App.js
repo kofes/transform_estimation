@@ -1,7 +1,8 @@
 import React, {useEffect} from 'react';
 import jsfeat from 'jsfeat';
-import img1 from '../images/1_002.jpg';
-import img2 from '../images/1_003.jpg';
+import img1 from '../images/photo_01.jpg';
+import img2 from '../images/photo_02.jpg';
+import img3 from '../images/photo_03.jpg';
 import './App.css';
 
 // central difference using image moments to find dominant orientation
@@ -50,8 +51,15 @@ function pairwise(arr, callback, skips) {
     return result;
 }
 
-function render_corners(corners, count, img, step, type) {
-    var pix = type ? ((0xff << 24) | (0x00 << 16) | (0x00 << 8) | 0xff) : ((0xff << 24) | (0x00 << 16) | (0xff << 8) | 0x00);
+function render_corners(corners, count, img, step, color) {
+    if (!color) {
+        color = {
+            r: 255,
+            g: 0,
+            b: 0
+        }
+    }
+    var pix = ((0xff << 24) | (color.b << 16) | (color.g << 8) | color.r);
     for(var i=0; i < count; ++i)
     {
         var x = corners[i].x;
@@ -99,14 +107,17 @@ function render_matches(ctx, arrayOfKeypoints, matches, color) {
 function App() {
     const timeout = 50;
 
-    const images = [img1, img2];
+    const images = [img1, img2, img3];
     const imagesObjects = [];
 
-    const blur_size = 7;
+    const blur_size = 5;
     const lap_thres = 22;
     const eigen_thres = 14;
     const max_keypoints = 1000;
-    const norm_threshold = 60;
+    const norm_threshold = 200;
+
+    const canvas_width = 960;
+    const canvas_height = 1280;
 
     const getCanvasByImageIndex = (index, type) => document.getElementById('image-' + (type ? (type + '-') : '') + (index !== undefined ? index : ''));
     const getContextByImageIndex = (index, type) => getCanvasByImageIndex(index, type).getContext('2d');
@@ -115,8 +126,8 @@ function App() {
         {images.map((value, index) => (<canvas
             key={index}
             id={'image-' + index}
-            width={640}
-            height={480}
+            width={canvas_width}
+            height={canvas_height}
         />))}
     </div>);
 
@@ -125,8 +136,8 @@ function App() {
             return (<canvas
                 key={index}
                 id={'image-gray-' + index}
-                width={640}
-                height={480}
+                width={canvas_width}
+                height={canvas_height}
             ></canvas>)
         })}
     </div>);
@@ -136,19 +147,26 @@ function App() {
             return (<canvas
                 key={index}
                 id={'image-with-keypoints-' + index}
-                width={640}
-                height={480}
+                width={canvas_width}
+                height={canvas_height}
             ></canvas>)
         })}
     </div>);
 
-    let showCorrespondencePoints = () => {
-        return (<canvas
-            id={'image-with-correspondence-points-'}
-            width={640}
-            height={480}
-        />)
-    };
+    let showCorrespondencePoints = () => (<div className="correspondeces">
+        {images.map((val, index) => {
+            if (!index) {
+                return (<span key={index}/>);
+            }
+            return (<canvas
+                    key={index}
+                    id={'image-with-correspondence-points-' + (index-1)}
+                    width={canvas_width}
+                    height={canvas_height}
+                />);
+            })
+        }
+    </div>);
 
     // TODO: resolve match data {keypoints, count}
 
@@ -166,7 +184,7 @@ function App() {
             let best_dist2 = 256;
             let best_idx = -1;
 
-            let best_norm = 480.0*640;
+            let best_norm = canvas_height * canvas_width;
 
             let ld_i32 = data2.descriptors.buffer.i32; // cast to integer buffer
             let ld_off = 0;
@@ -206,7 +224,7 @@ function App() {
 
 
             // filter using the ratio between 2 closest matches
-            if(best_dist < 0.75*best_dist2 && best_norm < norm_threshold) {
+            if(best_dist < best_dist2 && best_norm < norm_threshold) {
                 matches.push({
                     keypoint_index_1: qidx,
                     keypoint_index_2: best_idx,
@@ -232,7 +250,7 @@ function App() {
         // motion kernel
         let mm_kernel = new jsfeat.motion_model.homography2d();
         // ransac params
-        let num_model_points = 8; // minimum points to estimate motion
+        let num_model_points = 4; // minimum points to estimate motion
         let reproj_threshold = 3; // max error to classify as inliner
         let eps = 0.5; // max outliers ratio
         let prob = 0.99; // probability of success
@@ -334,23 +352,16 @@ function App() {
         return jsfeat.linalg.svd_solve(m_matrix, e_matrix, b_matrix);
     }
 
-    function find_points_positions(keypoints, matches, transform) {
-        if (!transform) {
+    function find_points_positions(matched_points, transforms) {
+        if (!transforms || transforms.length < 2) {
             return;
         }
-        const pairs_coordinates = [];
-        for (let i = 0; i < matches.length; ++i) {
-            let m = matches[i];
-            let point1 = {
-                x: keypoints[0][m.keypoint_index_1].x,
-                y: keypoints[0][m.keypoint_index_1].y,
-            };
-            let point2 = {
-                x: keypoints[1][m.keypoint_index_2].x,
-                y: keypoints[1][m.keypoint_index_2].y,
-            };
-            pairs_coordinates.push([point1, point2]);
+        for (let i = 0; i < transforms.length; ++i) {
+            if (!transforms[i]) {
+                return;
+            }
         }
+        let [transform1, transform2, transform3, ...anotherTransforms] = transforms;
 
         let get = (matrix, i, j) => {
             return matrix.data[i * matrix.cols + j];
@@ -359,10 +370,11 @@ function App() {
             matrix.data[i * matrix.cols + j] = val;
         };
 
-        let t_matrix = new jsfeat.matrix_t(4, 4, jsfeat.F32C1_t);
-        for (let i = 0; i < pairs_coordinates.length; ++i) {
-            let [point1, point2] = pairs_coordinates[i];
-            let [transform1, transform2] = [transform, transform];
+        for (let i = 0; i < 1/*matched_points.length*/; ++i) {
+            let t_matrix = new jsfeat.matrix_t(6, 4, jsfeat.F32C1_t);
+
+            let [point1, point2, point3, ...anotherTransforms] = matched_points[i];
+            // let [transform1, transform2] = transforms;
 
             // row 1
             for (let k = 0; k < 4; ++k) {
@@ -373,9 +385,10 @@ function App() {
             // row 2
             for (let k = 0; k < 4; ++k) {
                 set(t_matrix, 1, k,
-                    point1.y * get(transform2, 2, k) - get(transform2, 1, k)
+                    point1.y * get(transform1, 2, k) - get(transform1, 1, k)
                 );
             }
+
             // row 3
             for (let k = 0; k < 4; ++k) {
                 set(t_matrix, 2, k,
@@ -388,12 +401,73 @@ function App() {
                     point2.y * get(transform2, 2, k) - get(transform2, 1, k)
                 );
             }
+
+
+            // row 5
+            for (let k = 0; k < 4; ++k) {
+                set(t_matrix, 2, k,
+                    point3.x * get(transform3, 2, k) - get(transform3, 0, k)
+                );
+            }
+            // row 6
+            for (let k = 0; k < 4; ++k) {
+                set(t_matrix, 3, k,
+                    point3.y * get(transform3, 2, k) - get(transform3, 1, k)
+                );
+            }
+
+
+            console.log('---point 1---');
+            console.log(point1);
+            console.log('---point 2---');
+            console.log(point2);
+            console.log('---transform 1---');
+            console.log(transform1);
+            console.log('---transform 2---');
+            console.log(transform2);
+            console.log('---T---');
+            console.log(t_matrix);
+
+            let U = new jsfeat.matrix_t(t_matrix.rows, t_matrix.rows, jsfeat.F32C1_t);
+            let W = new jsfeat.matrix_t(1, t_matrix.cols, jsfeat.F32C1_t);
+            let V_t = new jsfeat.matrix_t(t_matrix.cols, t_matrix.cols, jsfeat.F32C1_t);
+
+            jsfeat.linalg.svd_decompose(t_matrix, W, U, V_t, jsfeat.SVD_V_T);
+
+            console.log('---W---');
+            console.log(W);
+            console.log('---U---');
+            console.log(U);
+            console.log('---V_t---');
+            console.log(V_t);
+
+            // let x_vector = new jsfeat.matrix_t(4, 1, jsfeat.F32C1_t);
+            // jsfeat.linalg.svd_decompose()
+            // jsfeat.linalg.svd_solve(t_matrix, x_vector, new jsfeat.matrix_t(4, 1, jsfeat.F32C1_t));
+            // console.log('---solution---');
+            // console.log(x_vector);
         }
-        let x_vector = new jsfeat.matrix_t(4, 1, jsfeat.F32C1_t);
-        jsfeat.linalg.svd_solve(t_matrix, x_vector, new jsfeat.matrix_t(4, 1, jsfeat.F32C1_t));
+        // jsfeat.linalg.svd_solve(t_matrix, x_vector, new jsfeat.matrix_t(4, 1, jsfeat.F32C1_t));
         // console.log(x_vector);
     }
-
+/*
+    0: 745.9229125976562
+    1: -13.39715576171875
+    2: 737.67724609375
+    3: -730.1497192382812
+    4: 619.478759765625
+    5: -13.746614456176758
+    6: 629.9678955078125
+    7: -640.0626220703125
+    8: 742.1522216796875
+    9: -17.949859619140625
+    10: 754.7247314453125
+    11: -766.8300170898438
+    12: 537.6793823242188
+    13: -11.862923622131348
+    14: 546.7831420898438
+    15: -555.5443725585938
+*/
     function tick() {
         const imagesData = images.map((_, index) => {
             const canvas = getCanvasByImageIndex(index);
@@ -431,11 +505,14 @@ function App() {
             jsfeat.yape06.laplacian_threshold = lap_thres|0;
             jsfeat.yape06.min_eigen_value_threshold = eigen_thres|0;
 
+            const algo = jsfeat.yape06;
+            // algo.init(canvas_width, canvas_height);
+
             let keypoints = [];
             for (let i = 0; i < data.width * data.height; ++i) {
                 keypoints[i] = new jsfeat.keypoint_t(0,0,0,0,-1);
             }
-            let countKeypoints = jsfeat.yape06.detect(imgSmooth_u8, keypoints, 35);
+            let countKeypoints = algo.detect(imgSmooth_u8, keypoints, 35);
 
             // sort keypoints by score
             if (countKeypoints > max_keypoints) {
@@ -467,24 +544,33 @@ function App() {
             const drawData = context.getImageData(0, 0, canvas.width, canvas.height);
             let data_u32 = new Uint32Array(drawData.data.buffer);
 
-            render_corners(keyPoints[index].keypoints, keyPoints[index].count, data_u32, canvas.width, (index+1) % 2);
+            let color = {
+                r: (index === 0 ? 255 : 0),
+                g: (index === 1 ? 255 : 0),
+                b: (index === 2 ? 255 : 0)
+            };
+            render_corners(keyPoints[index].keypoints, keyPoints[index].count, data_u32, canvas.width, color);
             context.putImageData(drawData, 0, 0);
         });
 
         // draw backgrounds mix
-        pairwise(keyPoints, _ => {
-            let canvas = getCanvasByImageIndex(undefined, 'with-correspondence-points');
-            let ctx = getContextByImageIndex(undefined, 'with-correspondence-points');
+        pairwise(keyPoints, (data1, data2, idx1, idx2) => {
+            // if (idx1 > 0) {
+            //     return;
+            // }
+            let canvas = getCanvasByImageIndex(idx1, 'with-correspondence-points');
+            let ctx = getContextByImageIndex(idx1, 'with-correspondence-points');
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             let images = imagesObjects;
             ctx.globalAlpha = 0.5;
-            images.forEach((val) => {
+            [idx1, idx2].forEach(idx => {
+                let val = images[idx];
                 ctx.drawImage(val, 0, 0, canvas.width, canvas.height);
             });
             ctx.globalAlpha = 1.0;
-        })
+        });
 
         // calculate matches
         let matches = pairwise(keyPoints, (data1, data2, idx1, idx2) => {
@@ -495,16 +581,20 @@ function App() {
             };
         });
 
-        matches.forEach(({keypoints, matches}) => {
-            let canvas = getCanvasByImageIndex(undefined, 'with-correspondence-points');
-            let ctx = getContextByImageIndex(undefined, 'with-correspondence-points');
+        matches.forEach(({keypoints, matches}, index) => {
+            // if (index > 0) {
+            //     return;
+            // }
+            let canvas = getCanvasByImageIndex(index, 'with-correspondence-points');
+            let ctx = getContextByImageIndex(index, 'with-correspondence-points');
 
             const drawData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             let data_u32 = new Uint32Array(drawData.data.buffer);
-            render_corners(keypoints[0].keypoints, keypoints[0].count, data_u32, canvas.width, true);
-            render_corners(keypoints[1].keypoints, keypoints[1].count, data_u32, canvas.width, false);
+
+            render_corners(keypoints[0].keypoints, keypoints[0].count, data_u32, canvas.width, {r: 255, g: 0, b: 0});
+            render_corners(keypoints[1].keypoints, keypoints[1].count, data_u32, canvas.width, {r: 0, g: 255, b: 0});
             ctx.putImageData(drawData, 0, 0);
-            render_matches(ctx, keypoints, matches);
+            // render_matches(ctx, keypoints, matches, {r: 255, g: 255, b: 255});
         });
 
         if (!matches) {
@@ -519,7 +609,7 @@ function App() {
             };
         });
 
-        for (let iteration = 0; iteration < 3; ++iteration) {
+        for (let iteration = 0; iteration < 2; ++iteration) {
             // calculate new inliers
             transformData = transformData.map(({data, keypoints, matches}) => {
                 let currentMatches = data.length > 0 ? data[data.length - 1].outliers : matches;
@@ -549,8 +639,11 @@ function App() {
         }
 
         // draw inliers
-        transformData.map(({data, keypoints, matches}) => {
-            let ctx = getContextByImageIndex(undefined, 'with-correspondence-points');
+        transformData.map(({data, keypoints, matches}, index) => {
+            // if (index > 0) {
+            //     return;
+            // }
+            let ctx = getContextByImageIndex(index, 'with-correspondence-points');
             for (let i = 0; i < data.length; ++i) {
                 let buffer = data[i];
                 if (!buffer) {
@@ -566,6 +659,151 @@ function App() {
                 render_matches(ctx, keypoints, buffer.inliers, color);
             }
         });
+        // show count of  same inliers
+        let commonInliersData = [];
+        let commonInliersData_t = function() {
+            return {
+                data_index_1: 0,
+                data_index_2: 0,
+                matches: []
+            };
+        }
+        /*
+         * [index] -> {
+         * transformData[index]_data_index_1: number,
+         * transformData[index+1]_data_index_2: number,
+         * matches: [ transformData[index]_data[transformData[index]_data_index_1]_inliers_index, ...]
+         * }
+         *
+        **/
+        transformData.reduce((prevData, currData, index) => {
+            let common_inliers = [];
+            {
+                let {data, keypoints, matches} = prevData;
+                for (let k = 0; k < data.length; ++k) {
+                    let inliersData = new commonInliersData_t();
+                    inliersData.data_index_1 = k;
+
+                    if (!data[k].inliers) {
+                        common_inliers.push(inliersData);
+                        continue;
+                    }
+
+                    // let res = [];
+                    for (let i = 0; i < data[k].inliers.length; ++i) {
+                        let m = data[k].inliers[i];
+                        // let kp = keypoints[1].keypoints[m.keypoint_index_2];
+
+                        inliersData.matches.push({
+                            inliers_index_1: i
+                        });
+
+                        // res.push({
+                        //     x: kp.x,
+                        //     y: kp.y
+                        // });
+                    }
+
+
+                    common_inliers.push(inliersData);
+                }
+                // return res;
+            }
+
+            let newCommonInliners = [];
+            for (let l = 0; l < common_inliers.length; ++l) {
+                let inliersData = common_inliers[l];
+
+                let {data, keypoints, matches} = currData;
+                for (let k = 0; k < data.length; ++k) {
+
+                    let newInliersData = new commonInliersData_t();
+                    newInliersData.data_index_1 = inliersData.data_index_1;
+                    newInliersData.data_index_2 = k;
+
+                    if (!data[k].inliers) {
+                        newCommonInliners.push(newInliersData);
+                        continue;
+                    }
+
+
+                    for (let i = 0; i < data[k].inliers.length; ++i) {
+                        let m = data[k].inliers[i];
+
+                        let kp = keypoints[0].keypoints[m.keypoint_index_1];
+
+                        for (let j = 0; j < inliersData.matches.length; ++j) {
+                            let inliersMatch = inliersData.matches[j];
+                            let p = prevData.keypoints[1].keypoints[prevData.data[inliersData.data_index_1].inliers[inliersMatch.inliers_index_1].keypoint_index_2];
+                            // let p = prevData.keypoints[1].keypoints[inliersMatch.keypoint_index_1];
+
+                            let dist = Math.sqrt(Math.pow(p.x - kp.x, 2) + Math.pow(p.y - kp.y, 2));
+
+                            if (dist < 1) {
+                                newInliersData.matches.push({
+                                    inliers_index_1: inliersMatch.inliers_index_1,
+                                    inliers_index_2: i
+                                });
+                            }
+                        }
+                    }
+
+                    newCommonInliners.push(newInliersData);
+                }
+            }
+
+            // // filter not matched data
+            // for (let l = 0; l < common_inliers.length; ++l) {
+            //     let inliersData = common_inliers[l];
+            //     let filtered_matches = [];
+            //     for (let j = 0; j < inliersData.matches.length; ++j) {
+            //         let inliersMatch = inliersData.matches[j];
+            //         if (inliersMatch.hasOwnProperty('inliers_index_2')) {
+            //             filtered_matches.push(inliersMatch);
+            //         }
+            //     }
+            //     common_inliers[l].matches = filtered_matches;
+            // }
+
+            commonInliersData.push(newCommonInliners);
+
+            // {
+            //     let res = [];
+            //     let {data, keypoints, matches} = currData;
+            //     for (let k = 0; k < data.length; ++k) {
+            //         for (let i = 0; i < data[k].inliers.length; ++i) {
+            //             let m = data[k].inliers[i];
+            //             let kp = keypoints[0].keypoints[m.keypoint_index_1];
+            //             // let kp = keypoints[1].keypoints[m.keypoint_index_2];
+            //             for (let j = 0; j < common_inliers.length; ++j) {
+            //                 let p = common_inliers[j];
+            //                 let dist = Math.sqrt(Math.pow(p.x - kp.x, 2) + Math.pow(p.y - kp.y, 2));
+            //                 if (dist < 1) {
+            //                     res.push({
+            //                         x: p.x,
+            //                         y: p.y
+            //                     });
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     common_inliers = [...res];
+            //     return res;
+            // }
+        });
+
+        let maxCommonInliersData = commonInliersData.map((arr, index) => {
+            let resultInd = 0;
+            for (let i = 1; i < arr.length; ++i) {
+                if (arr[i].matches.length > arr[resultInd].matches.length) {
+                    resultInd = i;
+                }
+            }
+            return arr[resultInd];
+        });
+
+        // console.log(maxCommonInliersData);
+
         //
         // let essential_matrix = new jsfeat.matrix_t(3, 3, jsfeat.F32C1_t);
 
@@ -574,9 +812,17 @@ function App() {
         // transformData.map(({data, keypoints, matches}) => {
         //     return find_essential_matrix(keypoints, data[0].inliers);
         // });
-        let essential_matrices = transformData.map(({data, keypoints, matches}) => {
-            return data[0].transform;
+
+        let essential_matrices = transformData.map(({data, keypoints, matches}, index) => {
+            let data_index = 0;
+            if (index === maxCommonInliersData.length) {
+                data_index = maxCommonInliersData[index-1].data_index_2;
+            } else if (index < maxCommonInliersData.length) {
+                data_index = maxCommonInliersData[index].data_index_1;
+            }
+            return data[data_index].transform;
         });
+
         let decompositions = essential_matrices.map(essential_matrix => {
             if (!essential_matrix) {
                 return;
@@ -646,7 +892,17 @@ function App() {
             transform4x3.data[10] = R.data[8];
 
             let t = new jsfeat.matrix_t(3, 1, jsfeat.F32C1_t);
-            jsfeat.matmath.multiply(t, R, c);
+
+            // console.log('----R----');
+            // console.log(R);
+            // console.log('----c----');
+            // console.log(c);
+
+            let c_t = new jsfeat.matrix_t(1, 3, jsfeat.F32C1_t);
+            jsfeat.matmath.transpose(c_t, c);
+            jsfeat.matmath.multiply(t, R, c_t);
+            // console.log('----t----');
+            // console.log(t);
 
             transform4x3.data[3] = -t.data[0];
             transform4x3.data[7] = -t.data[1];
@@ -655,13 +911,53 @@ function App() {
             return transform4x3;
         });
 
-        let inliers_positions = transform4x3.map((transform_matrix, ind) => {
-            if (!transform_matrix) {
+        // console.log(transform4x3);
+        for (let i = 0; i < transform4x3.length - 2; ++i) {
+            if (!transform4x3[i] || !transform4x3[i+1] || !transform4x3[i+2]) {
+                continue;
+            }
+
+
+            find_points_positions(matchedPoints, [transform4x3[i], transform4x3[i+1], transform4x3[i+2]]);
+        }
+        transform4x3.reduce((transform_matrix1, transform_matrix2, ind) => {
+            if (!transform_matrix1 || !transform_matrix2) {
                 return;
             }
-            let { data, keypoints, matches } = transformData[ind];
-            find_points_positions([keypoints[0].keypoints, keypoints[1].keypoints], data[0].inliers, transform_matrix);
+            let common_inliers_data = maxCommonInliersData[ind-1];
+
+            let prevData = transformData[ind-1];
+            let currData = transformData[ind];
+
+            let matchedPoints = [];
+            for (let i = 0; i < common_inliers_data.matches.length; ++i) {
+                let inliersMatch = common_inliers_data.matches[i];
+
+                let p1 = prevData.keypoints[0].keypoints[prevData.data[common_inliers_data.data_index_1].inliers[inliersMatch.inliers_index_1].keypoint_index_1];
+
+                let p2 = currData.keypoints[0].keypoints[currData.data[common_inliers_data.data_index_2].inliers[inliersMatch.inliers_index_2].keypoint_index_1];
+
+                matchedPoints.push({
+                    point1: {
+                        x: p1.x,
+                        y: p1.y
+                    },
+                    point2: {
+                        x: p2.x,
+                        y: p2.y
+                    }
+                });
+            }
+
+            find_points_positions(matchedPoints, {transform1: transform_matrix1, transform2: transform_matrix2});
         });
+        // let inliers_positions = transform4x3.map((transform_matrix, ind) => {
+        //     if (!transform_matrix) {
+        //         return;
+        //     }
+        //     let { data, keypoints, matches } = transformData[ind];
+        //     find_points_positions([keypoints[0].keypoints, keypoints[1].keypoints], data[0].inliers, transform_matrix);
+        // });
     }
 
     useEffect(() => {
@@ -669,8 +965,11 @@ function App() {
         const loadImage = (canvas, context, value) => {
             const img = new Image();
             img.src = value;
-            img.onload = () => {
-                context.drawImage(img, 0, 0, canvas.width, canvas.height);
+            img.onload = function() {
+                // context.drawImage(img, 0, 0, this.width, this.height);
+                // context.canvas.width = this.width;
+                // context.canvas.height = this.height;
+                context.drawImage(img, 0, 0, this.width, this.height);
             };
             imagesObjects.push(img);
         }
